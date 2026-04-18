@@ -191,14 +191,6 @@ def main(stdscr):
             safe_addstr(stdscr, 12, 0, "Blockchain: ")
             safe_addstr(stdscr, 12, 12, status_msg, color)
 
-            # Graphs
-            max_points = max(1, w // 3)
-
-            max_spd = max(speed_history) if speed_history else 1
-            spd_graph = "".join(draw_bar(v, max_spd, 2) for v in list(speed_history)[-max_points:])
-            safe_addstr(stdscr, 17, 0, "Speed Trend:")
-            safe_addstr(stdscr, 18, 0, spd_graph)
-
             safe_addstr(stdscr, h - 1, 0, "Press [q] to exit")
 
             stdscr.refresh()
