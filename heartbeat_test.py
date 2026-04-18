@@ -19,12 +19,16 @@ w3 = Web3(Web3.HTTPProvider('http://127.0.0.1:8545'))
 w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
 my_address = "0x65e24BBF350cC4665309513d423eA4f6F1CC49f7"
 
-# --- Logging (NEW FORMAT: HHMM-DDMMYYYY) ---
-if not os.path.exists('thesis_logs'):
-    os.makedirs('thesis_logs')
+# --- Logging Path (UPDATED) ---
+LOG_DIR = "/home/merajpi/Nabil/logs"
 
+# Create directory if not exists
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
+
+# Filename format: HHMM-DDMMYYYY
 timestamp_str = datetime.now().strftime("%H%M-%d%m%Y")
-log_filename = f"thesis_logs/latency_tx_{timestamp_str}.csv"
+log_filename = os.path.join(LOG_DIR, f"latency_tx_{timestamp_str}.csv")
 
 # --- Safe Print ---
 def safe_addstr(stdscr, y, x, text, attr=0):
@@ -62,6 +66,7 @@ def main(stdscr):
         20, 1
     )
 
+    # Create CSV with header
     with open(log_filename, mode='w', newline='') as f:
         csv.writer(f).writerow(["Timestamp", "Latency_ms", "Blockchain_Status"])
 
@@ -95,6 +100,7 @@ def main(stdscr):
             latency = (now - last_msg_time) * 1000
             last_msg_time = now
 
+            # Write log
             with open(log_filename, mode='a', newline='') as f:
                 csv.writer(f).writerow([now, latency, BLOCKCHAIN_MODE])
 
@@ -147,6 +153,7 @@ def main(stdscr):
 
                 last_tx_time = now
 
+        # --- DISPLAY ---
         if time.time() - last_display_update > DISPLAY_INTERVAL:
             stdscr.erase()
 
