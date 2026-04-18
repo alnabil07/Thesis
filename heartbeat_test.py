@@ -180,7 +180,7 @@ def main(stdscr):
             # ✅ LOCATION + SATELLITE (FIXED)
             location_str = f"{telemetry['latitude']:.6f}, {telemetry['longitude']:.6f}"
             sat_str = f"{telemetry['satellites']} sats"
-            safe_addstr(stdscr, 5, 0, f"Location: {location_str:<30} | {sat_str}")
+            safe_addstr(stdscr, 5, 0, f"Location: {location_str:<30}    |   Satellite: {sat_str}")
 
             safe_addstr(stdscr, 7, 0, f"Altitude: {telemetry['altitude']:.2f} m    Speed: {telemetry['speed']:.2f} m/s")
             safe_addstr(stdscr, 8, 0, f"Heading: {telemetry['heading']} deg")
@@ -193,11 +193,6 @@ def main(stdscr):
 
             # Graphs
             max_points = max(1, w // 3)
-
-            max_alt = max(alt_history) if alt_history else 1
-            alt_graph = "".join(draw_bar(v, max_alt, 2) for v in list(alt_history)[-max_points:])
-            safe_addstr(stdscr, 14, 0, "Altitude Trend:")
-            safe_addstr(stdscr, 15, 0, alt_graph)
 
             max_spd = max(speed_history) if speed_history else 1
             spd_graph = "".join(draw_bar(v, max_spd, 2) for v in list(speed_history)[-max_points:])
