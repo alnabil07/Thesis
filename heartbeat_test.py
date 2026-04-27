@@ -313,7 +313,7 @@ def main(stdscr):
             stdscr.erase()
 
             safe_addstr(stdscr, 0, 0,
-                "=== THESIS: BLOCKCHAIN LATENCY IN EMBEDDED FLIGHT CONTROL ===",
+                "=== BLOCKCHAIN LATENCY IN EMBEDDED FLIGHT CONTROL SYSTEM ===",
                 REV)
 
             safe_addstr(stdscr, 2, 0,
