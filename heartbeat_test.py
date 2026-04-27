@@ -32,7 +32,7 @@ TX_INTERVAL      = 2.0              # Blockchain TX interval (seconds)
 
 RPC_URL          = 'http://127.0.0.1:8545'
 CHAIN_ID         = 1337
-MY_ADDRESS       = "0x11Db73254c357F47B1194616B0142f738d0f3124"
+MY_ADDRESS       = "0x55fa363e65c1cd9172F8D1E34FFD4A35A52f3998"
 
 LOG_DIR          = "/home/merajpi/Nabil/logs"
 WINDOW_SIZE      = 50               # Rolling stats window (messages)
