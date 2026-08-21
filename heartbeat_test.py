@@ -32,7 +32,7 @@ TX_INTERVAL      = 2.0              # Blockchain TX interval (seconds)
 
 RPC_URL          = 'http://127.0.0.1:8545'
 CHAIN_ID         = 1337
-MY_ADDRESS       = "0x55fa363e65c1cd9172F8D1E34FFD4A35A52f3998"
+MY_ADDRESS       = "0x11Db73254c357F47B1194616B0142f738d0f3124"
 
 LOG_DIR          = "/home/merajpi/Nabil/logs"
 WINDOW_SIZE      = 50               # Rolling stats window (messages)
@@ -149,6 +149,20 @@ def main(stdscr):
         f"  Connecting MAVLink: {DEVICE} @ {BAUD} baud ...", BOLD)
     stdscr.refresh()
 
+    # Check if the serial port is already held by another process
+    import subprocess
+    port_check = subprocess.run(["fuser", DEVICE], capture_output=True, text=True)
+    if port_check.stdout.strip():
+        pids = port_check.stdout.strip()
+        safe_addstr(stdscr, 6, 0,
+            f"  MAVLink FAILED: {DEVICE} is already held by PID {pids}", RED | BOLD)
+        safe_addstr(stdscr, 7, 0,
+            f"  Run: kill {pids}   then restart this script.", RED)
+        safe_addstr(stdscr, 9, 0, "  Press any key to exit.")
+        stdscr.nodelay(False)
+        stdscr.getch()
+        return
+
     try:
         connection = mavutil.mavlink_connection(DEVICE, baud=BAUD)
         connection.wait_heartbeat(timeout=10)
@@ -203,7 +217,16 @@ def main(stdscr):
         if key == ord('r'):
             height_offset = None
 
-        msg = connection.recv_match(blocking=False)
+        try:
+            msg = connection.recv_match(blocking=False)
+        except Exception as serial_err:
+            # Serial cable disconnected mid-session
+            safe_addstr(stdscr, 20, 0,
+                f"  !! SERIAL DISCONNECTED: {str(serial_err)[:60]}",
+                curses.color_pair(2) | curses.A_BOLD)
+            stdscr.refresh()
+            time.sleep(2)
+            break
         if msg:
             now = time.perf_counter()
 
@@ -375,6 +398,9 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nAborted.")
     except Exception as e:
-        curses.endwin()
+        try:
+            curses.endwin()  # May already be closed by curses.wrapper on exception
+        except Exception:
+            pass
         print(f"\n[FATAL] {type(e).__name__}: {e}")
         sys.exit(1)

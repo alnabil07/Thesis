@@ -122,3 +122,24 @@ geth \
   --allow-insecure-unlock \
   --nodiscover \
   --verbosity 3
+
+
+  ##### **Start Geth Command 2.0**
+--------------------------------------------------------------------
+
+  NEW_ADDR_WITH_0x="11Db73254c357F47B1194616B0142f738d0f3124"
+
+geth \
+  --datadir ~/eth-private/data \
+  --networkid 1337 \
+  --http --http.addr "127.0.0.1" --http.port 8545 \
+  --http.api "eth,net,web3,miner,clique,txpool" \
+  --http.corsdomain "*" --http.vhosts "*" \
+  --mine \
+  --miner.etherbase "$NEW_ADDR_WITH_0x" \
+  --unlock "$NEW_ADDR_WITH_0x" \
+  --password ~/eth-private/password.txt \
+  --allow-insecure-unlock \
+  --nodiscover --verbosity 3
+
+-------------------------------------------------------------
