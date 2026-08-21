@@ -148,7 +148,6 @@ def main(stdscr):
     safe_addstr(stdscr, 5, 0,
         f"  Connecting MAVLink: {DEVICE} @ {BAUD} baud ...", BOLD)
     stdscr.refresh()
-
     # Check if the serial port is already held by another process
     import subprocess
     port_check = subprocess.run(["fuser", DEVICE], capture_output=True, text=True)
