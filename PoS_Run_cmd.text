@@ -1,0 +1,24 @@
+'''1. Put it in the password file'''
+
+echo -n "monbhalonei" > $DATADIR/password.txt
+chmod 600 $DATADIR/password.txt
+
+
+
+'''2. Check which address that new account actually has'''
+
+geth account list --datadir $DATADIR
+
+
+3. Now just rerun the node:
+
+geth --dev \
+  --datadir $DATADIR \
+  --networkid 1337 \
+  --http --http.addr 127.0.0.1 --http.port 8545 \
+  --http.api eth,net,web3,personal,txpool \
+  --rpc.enabledeprecatedpersonal \
+  --allow-insecure-unlock \
+  --unlock 0x55fa363e65c1cd9172F8D1E34FFD4A35A52f3998 \
+  --password $DATADIR/password.txt \
+  --dev.period 12
