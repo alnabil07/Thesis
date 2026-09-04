@@ -7,10 +7,10 @@
   Chain  : Private Ethereum PoS (Geth --dev, SimulatedBeacon, chainId=1337,
            ~12s slot time)
   Geth   : v1.13.15-stable  |  web3.py v6+
-  Note   : Confirmation waits (~12-24s) run on a background thread so the
-           MAVLink read loop and curses UI never stall waiting on a block.
-           CSV column names match the PoA script's so both logs can be fed
-           into the same analysis/plotting code for a direct comparison.
+  Mode   : Fire-and-forget TX submission (like the PoA script).
+           T_submission (~5-15ms) is measured inline; T_confirmation
+           (~12-24s) is tracked asynchronously by a background thread.
+           Both metrics are logged to CSV for complete thesis analysis.
 ================================================================================
 """
 
@@ -21,7 +21,7 @@ import os
 import sys
 import threading
 import queue
-import copy
+
 import subprocess
 import statistics
 from datetime import datetime
@@ -36,7 +36,8 @@ from web3 import Web3
 DEVICE           = '/dev/ttyAMA0'   # MAVLink serial port
 BAUD             = 921600           # Serial baud rate
 DISPLAY_INTERVAL = 0.1              # Terminal refresh rate (seconds)
-TX_INTERVAL      = 15.0             # TX submit interval (>= PoS slot time, 12s)
+TX_INTERVAL      = 2.0              # TX submit interval (fire-and-forget, no need
+                                     # to wait for slot; matches PoA interval)
 
 RPC_URL          = 'http://127.0.0.1:8545'
 CHAIN_ID         = 1337
@@ -53,12 +54,14 @@ w3 = Web3(Web3.HTTPProvider(RPC_URL))
 
 os.makedirs(LOG_DIR, exist_ok=True)
 timestamp_str = datetime.now().strftime("%H%M-%d%m%Y")
-log_filename  = os.path.join(LOG_DIR, f"latency_pos_{timestamp_str}.csv")
+log_filename  = os.path.join(LOG_DIR, f"latency_pos_ff_{timestamp_str}.csv")
 
 telemetry_gaps = deque(maxlen=WINDOW_SIZE)
 
-# Same schema as the PoA script's CSV, so PoA vs PoS logs can be
-# compared/plotted with the same analysis code.
+# CSV schema: compatible with the PoA script, plus extra confirmation columns.
+# "Blockchain_TX_Latency_ms" = T_submission (fire-and-forget, what the flight
+#   controller actually experiences — the main-loop blocking time).
+# "Confirmation_Latency_ms"  = T_confirmation (background thread, for thesis).
 CSV_HEADER = [
     "Timestamp",
     "Telemetry_Gap_ms",
@@ -66,6 +69,7 @@ CSV_HEADER = [
     "Telemetry_Max_Gap_ms",
     "Telemetry_Std_Gap_ms",
     "Blockchain_TX_Latency_ms",
+    "Confirmation_Latency_ms",
     "TX_Count",
     "Block_Number",
     "Blockchain_Status",
@@ -82,10 +86,11 @@ CSV_HEADER = [
 # ============================================================
 #  SHARED BLOCKCHAIN STATE (written by worker thread, read by UI)
 # ============================================================
-tx_queue = queue.Queue()
+confirm_queue = queue.Queue()   # main thread -> worker: (tx_hash, submit_time)
 stats_lock = threading.Lock()
 blockchain_stats = {
-    "latency_ms": 0.0,
+    "submit_ms": 0.0,           # T_submission (fire-and-forget, inline)
+    "confirm_ms": 0.0,          # T_confirmation (background receipt wait)
     "status": "WAITING FOR FIRST TX...",
     "tx_count": 0,
     "current_block": 0,
@@ -127,69 +132,28 @@ def append_csv(row: list):
         csv.writer(f).writerow(row)
 
 # ============================================================
-#  BACKGROUND WORKER — submits the TX and blocks on the PoS
-#  confirmation receipt (12-24s) without stalling MAVLink/UI.
+#  BACKGROUND WORKER — waits for PoS confirmation receipts
+#  (~12-24s) without stalling the MAVLink/UI main loop.
+#  The main loop does fire-and-forget send_transaction() and
+#  pushes (tx_hash, submit_time_ns) here for receipt tracking.
 # ============================================================
-def blockchain_worker():
-    try:
-        nonce = w3.eth.get_transaction_count(MY_ADDRESS, 'pending')
-    except Exception:
-        nonce = 0
-
+def confirmation_worker():
     while True:
-        telemetry_snapshot = tx_queue.get()
-        tx_start = time.perf_counter()
+        tx_hash, submit_time = confirm_queue.get()
 
         try:
-            payload = (
-                f"ALT:{telemetry_snapshot['altitude']:.2f},"
-                f"SPD:{telemetry_snapshot['speed']:.2f},"
-                f"LAT:{telemetry_snapshot['latitude']:.6f},"
-                f"LON:{telemetry_snapshot['longitude']:.6f},"
-                f"HDG:{telemetry_snapshot['heading']},"
-                f"SAT:{telemetry_snapshot['satellites']}"
-            )
-
-            tx = {
-                'from': MY_ADDRESS,
-                'to': MY_ADDRESS,
-                'value': 0,
-                'gas': 120_000,
-                'maxFeePerGas': w3.to_wei(2, 'gwei'),        # PoS: EIP-1559 fees
-                'maxPriorityFeePerGas': w3.to_wei(1, 'gwei'),
-                'nonce': nonce,
-                'data': w3.to_hex(text=payload),
-                'chainId': CHAIN_ID,
-            }
-
-            tx_hash = w3.eth.send_transaction(tx)
-            # Blocks for ~12-24s (one or two PoS slots) — this is the
-            # actual T_total the thesis is measuring.
-            receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-
-            t_total = (time.perf_counter() - tx_start) * 1000.0
-            nonce += 1
+            receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+            t_confirm = (time.perf_counter() - submit_time) * 1000.0
 
             with stats_lock:
-                blockchain_stats["latency_ms"]    = t_total
-                blockchain_stats["status"]        = "OK"
-                blockchain_stats["tx_count"]      += 1
+                blockchain_stats["confirm_ms"]    = t_confirm
                 blockchain_stats["current_block"] = receipt['blockNumber']
 
         except Exception as e:
-            err_msg = str(e)[:40]
             with stats_lock:
-                blockchain_stats["latency_ms"] = -1.0
-                blockchain_stats["status"]     = f"ERR: {err_msg}"
+                blockchain_stats["confirm_ms"] = -1.0
 
-            # Failsafe: bad nonce -> resync from the pending pool
-            if "nonce" in err_msg.lower() or "underpriced" in err_msg.lower():
-                try:
-                    nonce = w3.eth.get_transaction_count(MY_ADDRESS, 'pending')
-                except Exception:
-                    pass
-
-        tx_queue.task_done()
+        confirm_queue.task_done()
 
 # ============================================================
 #  MAIN CURSES LOOP
@@ -232,7 +196,7 @@ def main(stdscr):
         return
 
     # Start the background TX/confirmation worker
-    worker_thread = threading.Thread(target=blockchain_worker, daemon=True)
+    worker_thread = threading.Thread(target=confirmation_worker, daemon=True)
     worker_thread.start()
 
     # ── Startup: MAVLink ──────────────────────────────────────
@@ -275,6 +239,8 @@ def main(stdscr):
     last_msg_time     = time.perf_counter()
     last_display_time = time.perf_counter()
     last_tx_time      = time.perf_counter() - TX_INTERVAL
+
+    nonce_cache       = None
 
     gap      = 0.0
     mean_gap = 0.0
@@ -343,14 +309,63 @@ def main(stdscr):
                 height_offset = raw_h
             telemetry['altitude'] = raw_h - height_offset
 
-            # ── Hand off to background thread (non-blocking) ───
+            # ── Fire-and-forget TX (inline, ~5-15ms) ───────────
             if now - last_tx_time >= TX_INTERVAL:
                 last_tx_time = now
-                tx_queue.put(copy.deepcopy(telemetry))
+                tx_start = time.perf_counter()
+
+                try:
+                    payload = (
+                        f"ALT:{telemetry['altitude']:.2f},"
+                        f"SPD:{telemetry['speed']:.2f},"
+                        f"LAT:{telemetry['latitude']:.6f},"
+                        f"LON:{telemetry['longitude']:.6f},"
+                        f"HDG:{telemetry['heading']},"
+                        f"SAT:{telemetry['satellites']}"
+                    )
+
+                    if nonce_cache is None:
+                        nonce_cache = w3.eth.get_transaction_count(
+                            MY_ADDRESS, 'pending'
+                        )
+
+                    tx = {
+                        'from': MY_ADDRESS,
+                        'to': MY_ADDRESS,
+                        'value': 0,
+                        'gas': 120_000,
+                        'maxFeePerGas': w3.to_wei(2, 'gwei'),
+                        'maxPriorityFeePerGas': w3.to_wei(1, 'gwei'),
+                        'nonce': nonce_cache,
+                        'data': w3.to_hex(text=payload),
+                        'chainId': CHAIN_ID,
+                    }
+
+                    tx_hash = w3.eth.send_transaction(tx)
+                    t_submit = (time.perf_counter() - tx_start) * 1000.0
+                    nonce_cache += 1
+
+                    with stats_lock:
+                        blockchain_stats["submit_ms"] = t_submit
+                        blockchain_stats["status"]    = "OK"
+                        blockchain_stats["tx_count"] += 1
+
+                    # Hand hash to background thread for receipt tracking
+                    confirm_queue.put((tx_hash, tx_start))
+
+                except Exception as e:
+                    err_msg = str(e)[:40]
+                    with stats_lock:
+                        blockchain_stats["submit_ms"] = -1.0
+                        blockchain_stats["status"]    = f"ERR: {err_msg}"
+
+                    if "nonce" in err_msg.lower() or "underpriced" in err_msg.lower():
+                        nonce_cache = None
 
             # ── Read latest blockchain stats & log ─────────────
             with stats_lock:
-                bc_latency = blockchain_stats["latency_ms"]
+                bc_submit  = blockchain_stats["submit_ms"]
+                bc_confirm = blockchain_stats["confirm_ms"]
                 bc_status  = blockchain_stats["status"]
                 bc_txcount = blockchain_stats["tx_count"]
                 bc_block   = blockchain_stats["current_block"]
@@ -361,7 +376,8 @@ def main(stdscr):
                 f"{mean_gap:.3f}",
                 f"{max_gap:.3f}",
                 f"{std_gap:.3f}",
-                f"{bc_latency:.3f}",
+                f"{bc_submit:.3f}",
+                f"{bc_confirm:.3f}",
                 bc_txcount,
                 bc_block,
                 bc_status,
@@ -378,7 +394,8 @@ def main(stdscr):
         # ── Display ───────────────────────────────────────────
         if time.perf_counter() - last_display_time >= DISPLAY_INTERVAL:
             with stats_lock:
-                bc_latency = blockchain_stats["latency_ms"]
+                bc_submit  = blockchain_stats["submit_ms"]
+                bc_confirm = blockchain_stats["confirm_ms"]
                 bc_status  = blockchain_stats["status"]
                 bc_txcount = blockchain_stats["tx_count"]
                 bc_block   = blockchain_stats["current_block"]
@@ -402,31 +419,35 @@ def main(stdscr):
             safe_addstr(stdscr, 7, 2, f"Max gap     : {max_gap:8.3f} ms")
             safe_addstr(stdscr, 8, 2, f"Std dev     : {std_gap:8.3f} ms")
 
-            safe_addstr(stdscr, 10, 0, "BLOCKCHAIN (PoS, ~12s slot)", BOLD)
+            safe_addstr(stdscr, 10, 0, "BLOCKCHAIN (PoS fire-and-forget)", BOLD)
             bc_color = GREEN if bc_status == "OK" else RED
-            safe_addstr(stdscr, 11, 2, "T_total     : ")
+            safe_addstr(stdscr, 11, 2, "T_submit    : ")
             safe_addstr(stdscr, 11, 16,
-                f"{bc_latency:8.3f} ms" if bc_latency >= 0 else "      FAILED",
+                f"{bc_submit:8.3f} ms" if bc_submit >= 0 else "      FAILED",
                 bc_color | BOLD)
-            safe_addstr(stdscr, 12, 2, f"Status      : {bc_status}", bc_color)
-            safe_addstr(stdscr, 13, 2,
-                "(confirmation runs in the background; UI never blocks on it)",
+            safe_addstr(stdscr, 12, 2, "T_confirm   : ")
+            safe_addstr(stdscr, 12, 16,
+                f"{bc_confirm:8.3f} ms" if bc_confirm >= 0 else "   PENDING",
+                CYAN | BOLD)
+            safe_addstr(stdscr, 13, 2, f"Status      : {bc_status}", bc_color)
+            safe_addstr(stdscr, 14, 2,
+                "(T_submit = inline latency; T_confirm = background receipt)",
                 CYAN)
 
-            safe_addstr(stdscr, 15, 0, "FLIGHT DATA", BOLD)
-            safe_addstr(stdscr, 16, 2,
+            safe_addstr(stdscr, 16, 0, "FLIGHT DATA", BOLD)
+            safe_addstr(stdscr, 17, 2,
                 f"Altitude : {telemetry['altitude']:7.2f} m"
                 f"   Speed : {telemetry['speed']:5.2f} m/s"
                 f"   Heading : {telemetry['heading']:3d} deg")
-            safe_addstr(stdscr, 17, 2,
+            safe_addstr(stdscr, 18, 2,
                 f"GPS      : {telemetry['latitude']:11.7f},"
                 f" {telemetry['longitude']:12.7f}"
                 f"   Sats: {telemetry['satellites']}")
-            safe_addstr(stdscr, 18, 2,
+            safe_addstr(stdscr, 19, 2,
                 f"Battery  : {telemetry['voltage']:.2f} V"
                 f"  /  {telemetry['current']:.2f} A")
 
-            safe_addstr(stdscr, 20, 0,
+            safe_addstr(stdscr, 21, 0,
                 "[q] quit   [r] reset altitude baseline", CYAN)
 
             stdscr.refresh()

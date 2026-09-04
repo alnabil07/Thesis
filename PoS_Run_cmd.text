@@ -12,6 +12,8 @@ geth account list --datadir $DATADIR
 
 3. Now just rerun the node:
 
+DATADIR=/home/merajpi/Nabil/geth-pos-data
+
 geth --dev \
   --datadir $DATADIR \
   --networkid 1337 \
