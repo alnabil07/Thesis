@@ -93,7 +93,7 @@ CHAIN_ID         = 1337
 MY_ADDRESS       = Web3.to_checksum_address("0x11Db73254c357F47B1194616B0142f738d0f3124")
 
 # TODO: point this at your PoA account's actual keystore file.
-KEYSTORE_PATH    = "/home/merajpi/Nabil/geth-poa-data/keystore/UTC--<your-poa-keystore-file>"
+KEYSTORE_PATH    = "/home/merajpi/eth-private/data"
 # Never hardcode the password in source. Set this env var before running,
 # e.g.  export POA_KEYSTORE_PASSWORD='...'
 # If it's not set, you'll be prompted securely (no echo) at startup.
